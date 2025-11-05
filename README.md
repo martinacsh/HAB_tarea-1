@@ -57,14 +57,24 @@ Este proyecto implementa un análisis funcional centrado en tres genes mitocondr
 
 ---
 
-## Justificación de métodos (resumen)
+## Justificación de métodos
 
-- **Anotación gene-céntrica (MyGene.info):** unifica **Entrez/Ensembl/UniProt** y recupera **GO/KEGG/Reactome** por gen, asegurando **trazabilidad** y **desambiguación** (crítica en genes mitocondriales). Aporta **contexto** incluso con listas cortas.  
-- **Inferencia funcional (ORA con g:Profiler):** adecuada para listas **no rankeadas** y **pequeñas**; prueba **hipergeométrica** y control **FDR (BH)**. **GSEA** no se usa por defecto (requiere ranking global y pierde potencia en listas pequeñas), pero se contempla si se dispone de un **universo rankeado**.  
-- **Visualización:** barplots de **−log10(FDR)** por base (**GO: BP/MF/CC**, **KEGG**, **Reactome**) para comunicar significancia; la **tabla completa** de enriquecimiento (incluyendo genes de intersección) se mantiene en **CSV** para análisis detallado.  
-- **Reproducibilidad/robustez:** CLI con `--all` (mapeo+anotación+ORA+gráficos+resumen), **valores por defecto seguros**, normalización de organismo (**MyGene→"human"**, **g:Profiler→"hsapiens"**), opción `--verbose`, **dependencias fijadas** y **reintentos** ante fallos puntuales del servicio de enriquecimiento.  
-- **Extensiones y limitaciones:** posible **propagación en redes** (p. ej., **Random Walk with Restart** sobre PPI) para priorizar vecinos y repetir ORA capturando módulos. Con **listas muy pequeñas**, la **potencia** es limitada; se compensa con la **evidencia estable** de la anotación gene-céntrica.
+**Resumen:** el diseño metodológico prioriza **trazabilidad de identificadores**, **adecuación estadística al tamaño/forma de la lista** y **comunicación clara de resultados**. A continuación, se detalla brevemente por qué cada decisión técnica encaja con el problema (listas pequeñas, no rankeadas y genes mitocondriales con posibles ambigüedades).
 
+- **Anotación gene-céntrica con MyGene.info**  
+  Unifica **Entrez/Ensembl/UniProt** y recupera **GO/KEGG/Reactome** por gen en un solo paso. Esto mejora la **trazabilidad** y reduce **ambigüedades de símbolos** (especialmente frecuentes en genes mitocondriales o sinónimos históricos). Además, la anotación por-gen aporta **contexto biológico estable** incluso cuando el conjunto es reducido, haciendo explícitas las funciones/vías asociadas antes de cualquier inferencia.
+
+- **Inferencia funcional mediante ORA (g:Profiler)**  
+  **ORA** es apropiado para listas **no rankeadas** y potencialmente **cortas**: contrasta la sobre-representación con una prueba **hipergeométrica** y aplica **FDR (Benjamini–Hochberg)** para controlar error de tipo I. **GSEA** no se adopta por defecto al requerir un **ranking global** y perder potencia con tamaños pequeños; se contempla como **extensión** cuando se disponga de un universo rankeado (p. ej., *fold-changes* o *scores* genómicos).
+
+- **Visualización y entrega de resultados**  
+  Se priorizan **barplots de −log10(FDR)** desglosados por base (**GO: BP/MF/CC**, **KEGG**, **Reactome**) para transmitir de forma directa **magnitud de significancia** y facilitar la comparación entre categorías. La **tabla completa** (con términos, FDR, conteos y **genes de intersección**) se conserva en **CSV** para auditoría y análisis secundario (filtrado, unión con metadatos, etc.).
+
+- **Reproducibilidad y tolerancia a fallos**  
+  Exposición por **CLI** con `--all` (mapeo + anotación + ORA + gráficos + resumen) y **valores por defecto seguros**. Normalización automática de organismo (**MyGene→"human"**, **g:Profiler→"hsapiens"**), **registro detallado** opcional (`--verbose`) y **reintentos** ante fallos puntuales del servicio de enriquecimiento, sin bloquear el resto del *pipeline*. Dependencias mínimas fijadas en `requirements.txt`.
+
+- **Extensión de red y limitaciones**  
+  Como mejora, puede aplicarse **propagación en redes** (p. ej., **Random Walk with Restart** sobre PPI) para priorizar vecinos y repetir ORA enfocándose en **módulos funcionales**. Se reconoce que con **listas muy pequeñas** la **potencia estadística** es acotada; por ello se complementa con la **evidencia estable** de la anotación gene-céntrica y la inspección manual de términos clave.
 
 ---
 
