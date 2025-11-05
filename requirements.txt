@@ -1,2 +1,7 @@
-
-
+pandas>=2.2
+numpy>=1.26
+mygene>=3.2.2
+gprofiler-official>=1.0.0
+matplotlib>=3.8
+# statsmodels es opcional; útil si amplías métodos
+statsmodels>=0.14

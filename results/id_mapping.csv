@@ -1,0 +1,11 @@
+query_symbol,symbol,name,entrezgene,ensembl_gene,uniprot_swissprot
+TP53,TP53,tumor protein p53,7157,ENSG00000141510,P04637
+BRCA1,BRCA1,BRCA1 DNA repair associated,672,ENSG00000012048,P38398
+EGFR,EGFR,epidermal growth factor receptor,1956,ENSG00000146648,P00533
+MYC,MYC,"MYC proto-oncogene, bHLH transcription factor",4609,ENSG00000136997,P01106
+CDK2,CDK2,cyclin dependent kinase 2,1017,ENSG00000123374,P24941
+PTEN,PTEN,phosphatase and tensin homolog,5728,,P60484
+AKT1,AKT1,AKT serine/threonine kinase 1,207,ENSG00000142208,P31749
+MTOR,MTOR,mechanistic target of rapamycin kinase,2475,ENSG00000198793,P42345
+VEGFA,VEGFA,vascular endothelial growth factor A,7422,ENSG00000112715,P15692
+MAPK1,MAPK1,mitogen-activated protein kinase 1,5594,ENSG00000100030,P28482
