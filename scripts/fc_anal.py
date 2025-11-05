@@ -1,57 +1,35 @@
 #!/usr/bin/env python3
 """
-func_an.py — Análisis funcional de genes (COX4I2, ND1, ATP6)
+func_an.py — Análisis funcional de genes (anotación + enriquecimiento opcional)
 
-Descripción general
--------------------
-Script de línea de comandos (CLI) para:
-  1) Leer una lista de genes (símbolos) desde un archivo de texto.
-  2) Mapear identificadores (Entrez, Ensembl, UniProt) y recuperar anotaciones básicas (GO, KEGG, Reactome) usando MyGene.info.
-  3) (Opcional) Ejecutar un análisis de sobre-representación (ORA) mediante g:Profiler
-     sobre GO (BP/MF/CC), KEGG y Reactome con corrección FDR (Benjamini–Hochberg).
-  4) Exportar resultados a CSV y, si se solicita, generar gráficos sencillos.
+Objetivo
+--------
+- Ejecutar TODO con **un solo comando** si quieres: `python scripts/func_an.py --all`
+- Por defecto usa `data/genes_input.txt`, escribe en `results/`, y genera `results/resumen.csv`.
 
-Bases de datos y librerías
---------------------------
-- MyGene.info (vía librería `mygene`): servicio para convertir IDs y recuperar
-  anotaciones gene-céntricas (GO/KEGG/Reactome por gen).
-- g:Profiler (librería `gprofiler-official`): enriquecimiento funcional de conjuntos
-  de genes contra GO, KEGG y Reactome. Se usa el organismo "hsapiens" por defecto.
-- pandas/numpy: manipulación de datos y tablas.
-- matplotlib: generación de gráficos (barplots) de términos enriquecidos.
-- statsmodels: NO es estrictamente necesario si usas g:Profiler (que ya aplica FDR),
-  pero útil si extiendes el script a métodos propios.
+Qué hace
+--------
+1) Lee símbolos génicos desde `--input` (por defecto: `data/genes_input.txt`).
+2) Mapea IDs y anota GO/KEGG/Reactome por gen usando **MyGene.info** (`mygene`).
+3) (Opcional) Ejecuta enriquecimiento ORA con **g:Profiler** (`gprofiler-official`) para GO (BP/MF/CC), KEGG y Reactome, con FDR.
+4) Exporta CSV y, si se solicita, genera barplots (`matplotlib`).
 
-Notas metodológicas
--------------------
-- ORA (Over-Representation Analysis): prueba de hipergeométrica que contrasta la
-  proporción de "hits" de tu lista dentro de un conjunto (p.ej. un término GO)
-  frente a lo esperado por azar, aplicando corrección por múltiples pruebas (FDR).
-- Tamaño de lista pequeño: con 3 genes (COX4I2, ND1, ATP6) el poder estadístico es
-  limitado. Integra el resultado con anotación gene-céntrica.
+Notas importantes
+-----------------
+- **Especie/organismo**: MyGene y g:Profiler usan códigos distintos. Este script **normaliza**:
+  - MyGene ← `human` (o 9606)
+  - g:Profiler ← `hsapiens`
+- Si g:Profiler falla (p.ej., error 500), el script **no se detiene** y continúa sin ORA.
 
-Uso
-----
-python scripts/func_an.py \
-  --input data/genes_input.txt \
-  --outdir results/ \
-  --organism hsapiens \
-  --run-enrichment \
-  --plot
+Dependencias
+------------
+- pandas, numpy, mygene, gprofiler-official (para ORA), matplotlib
 
-Argumentos mínimos: --input y --outdir/--output. No modifica el archivo de entrada.
-
-Salida (por defecto)
---------------------
-- <outdir>/id_mapping.csv               — mapeo de IDs y nombres canónicos
-- <outdir>/functional_annotations.csv   — anotaciones por gen (GO/KEGG/Reactome)
-- <outdir>/enrichment_table.csv         — (si --run-enrichment) tabla ORA g:Profiler
-- <outdir>/plots/*.png                  — (si --plot) barplots de términos top
-
-Requisitos (requirements.txt sugerido)
---------------------------------------
-- pandas, numpy, mygene, gprofiler-official, matplotlib
-
+Uso rápido
+---------
+- Todo en uno: `python scripts/func_an.py --all`
+- Personalizado:
+  `python scripts/func_an.py --input data/genes_input.txt --outdir results --organism hsapiens --run-enrichment --plot --output results/resumen.csv`
 """
 from __future__ import annotations
 import argparse
@@ -60,13 +38,12 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from time import sleep
 import pandas as pd
 
-# Importes perezosos (se cargan dentro de funciones si están disponibles)
-# mygene y gprofiler-official no son parte de la stdlib
-
-
-# ----------------------------- Utilidades básicas -----------------------------
+# -----------------------------------------------------------------------------
+# Logging y utilidades
+# -----------------------------------------------------------------------------
 
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
@@ -80,24 +57,25 @@ def setup_logging(verbose: bool = False) -> None:
 def read_gene_list(path: Path) -> List[str]:
     """
     Lee símbolos génicos desde un archivo de texto.
-    - Acepta formatos con uno por línea o separados por comas/espacios.
-    - Ignora líneas vacías y comentarios que comiencen con '#'.
-    - Devuelve una lista única (sin duplicados), en mayúsculas (símbolos estándar).
+    - Acepta uno por línea o separados por comas/espacios.
+    - Ignora líneas vacías y las que comienzan por '#'.
+    - Devuelve lista única (sin duplicados), en mayúsculas.
     """
-    raw = []
-    text = Path(path).read_text(encoding="utf-8", errors="ignore")
+    if not path.exists():
+        raise FileNotFoundError(f"No existe el archivo de entrada: {path}")
+
+    raw: List[str] = []
+    text = path.read_text(encoding="utf-8", errors="ignore")
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith('#'):
             continue
-        # Permite coma/espacio como separador adicional
-        parts = [p for chunk in line.split(',') for p in chunk.split()] if ',' in line or ' ' in line else [line]
+        parts = [p for chunk in line.split(',') for p in chunk.split()] if (',' in line or ' ' in line) else [line]
         raw.extend(parts)
-    # normaliza
     genes = [g.strip().upper() for g in raw if g.strip()]
-    # dedup conservando orden
+
     seen = set()
-    unique = []
+    unique: List[str] = []
     for g in genes:
         if g not in seen:
             unique.append(g)
@@ -108,7 +86,35 @@ def read_gene_list(path: Path) -> List[str]:
     return unique
 
 
-# ----------------------------- Mapeo con MyGene -------------------------------
+# -----------------------------------------------------------------------------
+# Normalización de organismos para MyGene (human) y g:Profiler (hsapiens)
+# -----------------------------------------------------------------------------
+
+def _normalize_mygene_species(organism: str) -> str:
+    """MyGene acepta 'human' o taxid '9606', NO 'hsapiens'."""
+    org = (organism or '').strip().lower()
+    mapping = {
+        'hsapiens': 'human', 'homo_sapiens': 'human', 'homo sapiens': 'human',
+        'human': 'human', 'hsa': 'human', '9606': 'human',
+        'mmusculus': 'mouse', 'mus_musculus': 'mouse', 'mus musculus': 'mouse',
+        'mouse': 'mouse', 'mmu': 'mouse', '10090': 'mouse',
+        'rnorvegicus': 'rat', 'rattus_norvegicus': 'rat',
+        'rat': 'rat', 'rnor': 'rat', '10116': 'rat',
+    }
+    return mapping.get(org, 'human')
+
+
+def _normalize_gprofiler_organism(organism: str) -> str:
+    """g:Profiler espera 'hsapiens' para humano."""
+    o = (organism or '').strip().lower()
+    if o in {'human', 'homo_sapiens', 'homo sapiens', 'hsa', '9606', 'hsapiens'}:
+        return 'hsapiens'
+    return o
+
+
+# -----------------------------------------------------------------------------
+# Mapeo y anotación con MyGene.info
+# -----------------------------------------------------------------------------
 
 def map_and_annotate_with_mygene(genes: List[str], organism: str = "hsapiens") -> Dict[str, pd.DataFrame]:
     """
@@ -116,9 +122,9 @@ def map_and_annotate_with_mygene(genes: List[str], organism: str = "hsapiens") -
       - Mapear símbolos a IDs (Entrez/Ensembl/UniProt) y nombre canónico
       - Recuperar anotaciones GO (BP/MF/CC) y pathways (KEGG/Reactome) por gen
 
-    Devuelve un diccionario con dos DataFrames:
-      - mapping: una fila por símbolo de entrada (con columnas de IDs y nombre)
-      - annotations: filas (gene, source, term_id, term_name)
+    Devuelve un dict con:
+      - mapping: DataFrame una fila por símbolo (IDs, nombres)
+      - annotations: DataFrame (gene, source, term_id, term_name)
     """
     try:
         import mygene  # type: ignore
@@ -126,13 +132,14 @@ def map_and_annotate_with_mygene(genes: List[str], organism: str = "hsapiens") -
         raise ImportError("Se requiere la librería 'mygene'. Añádela a requirements.txt e instálala.") from e
 
     mg = mygene.MyGeneInfo()
+    mygene_species = _normalize_mygene_species(organism)
 
-    # Campos a solicitar (ver documentación de mygene)
     fields = [
         "entrezgene",
         "ensembl.gene",
         "uniprot.Swiss-Prot",
         "name",
+        "symbol",
         "go.BP",
         "go.MF",
         "go.CC",
@@ -145,58 +152,48 @@ def map_and_annotate_with_mygene(genes: List[str], organism: str = "hsapiens") -
         genes,
         scopes="symbol",
         fields=",".join(fields),
-        species=organism,
+        species=mygene_species,
         as_dataframe=True,
         returnall=False,
         verbose=False,
     )
 
-    # qres es un DataFrame indexado por símbolo consultado (si as_dataframe=True)
-    # Normalizamos a un DF 'mapping' limpio y otro DF 'annotations'
-    mapping_rows = []
-    annot_rows = []
+    mapping_rows: List[Dict[str, Any]] = []
+    annot_rows: List[Dict[str, Any]] = []
 
     def _ensure_list(x: Any) -> List[Any]:
         if x is None or (isinstance(x, float) and pd.isna(x)):
             return []
-        if isinstance(x, list):
-            return x
-        return [x]
+        return x if isinstance(x, list) else [x]
 
-    # Iteración por símbolo de entrada
     for query_symbol, row in qres.iterrows():
-        # Algunos símbolos pueden no resolverse; protegemos accesos
-        entrez = row.get("entrezgene", None)
-        ensembl = None
-        if isinstance(row.get("ensembl.gene", None), list):
-            ensembl = row.get("ensembl.gene")[0]
-        else:
-            ensembl = row.get("ensembl.gene", None)
-        uniprot = None
-        if isinstance(row.get("uniprot.Swiss-Prot", None), list):
-            uniprot = row.get("uniprot.Swiss-Prot")[0]
-        else:
-            uniprot = row.get("uniprot.Swiss-Prot", None)
-        name = row.get("name", None)
+        # IDs
+        entrez = row.get("entrezgene")
+        ensembl_val = row.get("ensembl.gene")
+        ensembl = ensembl_val[0] if isinstance(ensembl_val, list) else ensembl_val
+        uniprot_val = row.get("uniprot.Swiss-Prot")
+        uniprot = uniprot_val[0] if isinstance(uniprot_val, list) else uniprot_val
+        symbol = row.get("symbol", query_symbol)
+        name = row.get("name")
 
         mapping_rows.append({
             "query_symbol": query_symbol,
-            "symbol": row.get("symbol", query_symbol),
+            "symbol": symbol,
             "name": name,
             "entrezgene": entrez,
             "ensembl_gene": ensembl,
             "uniprot_swissprot": uniprot,
         })
 
-        # GO terms (cada categoría puede venir como lista de dicts con id/name)
+        # GO terms
         for cat in ("BP", "MF", "CC"):
             go_list = row.get(f"go.{cat}")
             for term in _ensure_list(go_list):
                 term_id = term.get("id") if isinstance(term, dict) else None
-                term_name = term.get("term") if isinstance(term, dict) else str(term)
+                term_name = term.get("term") if isinstance(term, dict) else (str(term) if term is not None else None)
                 if term_id or term_name:
                     annot_rows.append({
-                        "gene": row.get("symbol", query_symbol),
+                        "gene": symbol,
                         "source": f"GO:{cat}",
                         "term_id": term_id,
                         "term_name": term_name,
@@ -204,10 +201,10 @@ def map_and_annotate_with_mygene(genes: List[str], organism: str = "hsapiens") -
         # KEGG
         for term in _ensure_list(row.get("pathway.kegg")):
             term_id = term.get("id") if isinstance(term, dict) else None
-            term_name = term.get("name") if isinstance(term, dict) else str(term)
+            term_name = term.get("name") if isinstance(term, dict) else (str(term) if term is not None else None)
             if term_id or term_name:
                 annot_rows.append({
-                    "gene": row.get("symbol", query_symbol),
+                    "gene": symbol,
                     "source": "KEGG",
                     "term_id": term_id,
                     "term_name": term_name,
@@ -215,10 +212,10 @@ def map_and_annotate_with_mygene(genes: List[str], organism: str = "hsapiens") -
         # Reactome
         for term in _ensure_list(row.get("pathway.reactome")):
             term_id = term.get("id") if isinstance(term, dict) else None
-            term_name = term.get("name") if isinstance(term, dict) else str(term)
+            term_name = term.get("name") if isinstance(term, dict) else (str(term) if term is not None else None)
             if term_id or term_name:
                 annot_rows.append({
-                    "gene": row.get("symbol", query_symbol),
+                    "gene": symbol,
                     "source": "REAC",
                     "term_id": term_id,
                     "term_name": term_name,
@@ -226,26 +223,17 @@ def map_and_annotate_with_mygene(genes: List[str], organism: str = "hsapiens") -
 
     mapping_df = pd.DataFrame(mapping_rows)
     annotations_df = pd.DataFrame(annot_rows)
-
     return {"mapping": mapping_df, "annotations": annotations_df}
 
 
-# ------------------------- Enriquecimiento con g:Profiler ---------------------
+# -----------------------------------------------------------------------------
+# Enriquecimiento con g:Profiler (con normalización y reintento)
+# -----------------------------------------------------------------------------
 
 def run_gprofiler_enrichment(genes: List[str], organism: str = "hsapiens",
                               sources: Optional[List[str]] = None) -> pd.DataFrame:
     """
-    Ejecuta ORA usando g:Profiler y devuelve un DataFrame con los resultados.
-
-    Parámetros
-    ----------
-    genes: lista de símbolos (p.ej., ["COX4I2", "ND1", "ATP6"]) 
-    organism: código de organismo para g:Profiler (por defecto 'hsapiens')
-    sources: lista de fuentes g:Profiler (ej.: ['GO:BP','GO:MF','GO:CC','KEGG','REAC'])
-
-    Devuelve
-    --------
-    DataFrame con columnas típicas de g:Profiler, incluyendo p_value y p_value_adjusted.
+    Ejecuta ORA usando g:Profiler y devuelve un DataFrame con p-value y FDR.
     """
     if sources is None:
         sources = ["GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC"]
@@ -255,16 +243,29 @@ def run_gprofiler_enrichment(genes: List[str], organism: str = "hsapiens",
     except ImportError as e:
         raise ImportError("Se requiere 'gprofiler-official'. Añádelo a requirements.txt e instálalo.") from e
 
-    logging.info("Ejecutando enriquecimiento con g:Profiler…")
     gp = GProfiler(return_dataframe=True)
-    # g:Profiler espera símbolos válidos y organismo en formato del servicio (hsapiens)
-    res_df = gp.profile(
-        organism=organism,
-        query=genes,
-        sources=sources,
-        user_threshold=1.0,  # dejamos que devuelva todo, filtraremos nosotros por FDR si se desea
-    )
-    # Normalización de nombres de columnas por conveniencia
+    gp_org = _normalize_gprofiler_organism(organism)
+
+    # Reintento ligero por errores temporales (p.ej. 500)
+    last_err: Optional[BaseException] = None
+    for attempt in range(2):
+        try:
+            res_df = gp.profile(
+                organism=gp_org,
+                query=genes,
+                sources=sources,
+                user_threshold=1.0,
+            )
+            break
+        except AssertionError as e:
+            last_err = e
+            logging.warning("g:Profiler falló (intento %d/2): %s", attempt + 1, e)
+            sleep(1.0)
+    else:
+        # No se pudo recuperar; propaga el último error
+        raise last_err  # type: ignore[misc]
+
+    # Normalización de columnas
     rename_map = {
         "p_value": "pvalue",
         "p_value_adjusted": "fdr",
@@ -278,7 +279,6 @@ def run_gprofiler_enrichment(genes: List[str], organism: str = "hsapiens",
     }
     res_df = res_df.rename(columns=rename_map)
 
-    # Orden sugerido: por FDR y luego por p-value
     sort_cols = [c for c in ("fdr", "pvalue") if c in res_df.columns]
     if sort_cols:
         res_df = res_df.sort_values(by=sort_cols, ascending=True)
@@ -286,10 +286,11 @@ def run_gprofiler_enrichment(genes: List[str], organism: str = "hsapiens",
     return res_df
 
 
-# ---------------------------------- Plots -------------------------------------
+# -----------------------------------------------------------------------------
+# Gráficos
+# -----------------------------------------------------------------------------
 
 def plot_top_terms(res_df: pd.DataFrame, outdir: Path, topn: int = 10) -> None:
-    """Genera barplots de −log10(FDR) para las distintas fuentes (db)."""
     import math
     import matplotlib.pyplot as plt
 
@@ -300,21 +301,23 @@ def plot_top_terms(res_df: pd.DataFrame, outdir: Path, topn: int = 10) -> None:
     out_plots = outdir / "plots"
     out_plots.mkdir(parents=True, exist_ok=True)
 
-    # Filtra términos con FDR disponible
     df = res_df.copy()
     if "fdr" not in df.columns:
-        logging.warning("La columna 'fdr' no está presente; los gráficos usarán p-value.")
+        logging.warning("La columna 'fdr' no está; se usará 'pvalue'.")
         df["fdr"] = df.get("pvalue", 1.0)
 
     df["neglog10_fdr"] = df["fdr"].apply(lambda x: -math.log10(x) if x > 0 else 0)
 
-    # Por cada base de datos, guardamos un barplot con top N términos
-    for db in sorted(df["db"].unique()):
+    for db in sorted(df["db"].dropna().unique()):
         sub = df[df["db"] == db].head(topn)
         if sub.empty:
             continue
-        plt.figure(figsize=(10, max(3, 0.4 * len(sub))))
-        plt.barh(sub["term_name"].astype(str), sub["neglog10_fdr"].astype(float))
+        # Evita NaN en nombres
+        labels = sub["term_name"].fillna(sub["term_id"]).astype(str)
+        values = sub["neglog10_fdr"].astype(float)
+
+        plt.figure(figsize=(10, max(3, 0.45 * len(sub))))
+        plt.barh(labels, values)
         plt.xlabel("-log10(FDR)")
         plt.ylabel("Término")
         plt.title(f"Top {len(sub)} términos — {db}")
@@ -326,35 +329,53 @@ def plot_top_terms(res_df: pd.DataFrame, outdir: Path, topn: int = 10) -> None:
         logging.info("Guardado plot: %s", fname)
 
 
-# --------------------------------- CLI/Main -----------------------------------
+# -----------------------------------------------------------------------------
+# CLI / main
+# -----------------------------------------------------------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Análisis funcional (anotación + enriquecimiento opcional)"
+        description="Anotación gene-céntrica + enriquecimiento (ORA) opcional"
     )
-    parser.add_argument("--input", required=True, help="Ruta al archivo de genes de entrada (símbolos)")
-    parser.add_argument("--outdir", required=False, default="results", help="Directorio de salida (por defecto: results)")
-    parser.add_argument("--output", required=False, default=None, help="Ruta a un CSV principal de salida (opcional)")
-    parser.add_argument("--organism", required=False, default="hsapiens", help="Organismo para MyGene/g:Profiler (por defecto: hsapiens)")
-    parser.add_argument("--run-enrichment", action="store_true", help="Ejecutar g:Profiler ORA")
-    parser.add_argument("--plot", action="store_true", help="Generar barplots con resultados de enriquecimiento")
-    parser.add_argument("--topn", type=int, default=10, help="N de términos a graficar por base de datos (default=10)")
-    parser.add_argument("--verbose", action="store_true", help="Modo detallado de logging")
+    parser.add_argument("--input", required=False, default="data/genes_input.txt",
+                        help="Archivo de genes (por defecto: data/genes_input.txt)")
+    parser.add_argument("--outdir", required=False, default="results",
+                        help="Directorio de salida (por defecto: results)")
+    parser.add_argument("--output", required=False, default="results/resumen.csv",
+                        help="CSV resumen (por defecto: results/resumen.csv)")
+    parser.add_argument("--organism", required=False, default="hsapiens",
+                        help="Organismo (se adapta a cada servicio). Por defecto: hsapiens")
+    parser.add_argument("--run-enrichment", action="store_true",
+                        help="Ejecutar g:Profiler ORA")
+    parser.add_argument("--plot", action="store_true",
+                        help="Generar barplots de términos enriquecidos")
+    parser.add_argument("--topn", type=int, default=10, help="N de términos a graficar por base de datos (10)")
+    parser.add_argument("--verbose", action="store_true", help="Logging detallado")
+    parser.add_argument("--all", action="store_true",
+                        help="Ejecuta todo: ORA + plots y genera resumen (usa defaults)")
 
     args = parser.parse_args(argv)
+
+    # Modo "todo en uno"
+    if args.all:
+        args.run_enrichment = True
+        args.plot = True
+        # Mantiene defaults de input/outdir/output definidos arriba
+
     setup_logging(args.verbose)
 
     input_path = Path(args.input)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # 1) Lectura de genes
     try:
         genes = read_gene_list(input_path)
     except Exception as e:
         logging.error("Error leyendo genes desde %s: %s", input_path, e)
         return 2
 
-    # 1) Mapeo y anotación gene-céntrica con MyGene.info
+    # 2) Mapeo y anotación con MyGene
     try:
         mg_res = map_and_annotate_with_mygene(genes, organism=args.organism)
     except ImportError as e:
@@ -367,18 +388,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     mapping_df = mg_res["mapping"]
     ann_df = mg_res["annotations"]
 
-    # Guardar salidas base
+    # Guardados base
     mapping_csv = outdir / "id_mapping.csv"
     annotations_csv = outdir / "functional_annotations.csv"
-    mapping_df.to_csv(mapping_csv, index=False)
-    ann_df.to_csv(annotations_csv, index=False)
-    logging.info("Guardado: %s (%d filas)", mapping_csv, len(mapping_df))
-    logging.info("Guardado: %s (%d filas)", annotations_csv, len(ann_df))
+    try:
+        mapping_df.to_csv(mapping_csv, index=False)
+        ann_df.to_csv(annotations_csv, index=False)
+        logging.info("Guardado: %s (%d filas)", mapping_csv, len(mapping_df))
+        logging.info("Guardado: %s (%d filas)", annotations_csv, len(ann_df))
+    except Exception as e:
+        logging.exception("No se pudieron escribir las tablas base: %s", e)
+        return 5
 
-    enrichment_csv = None
+    # 3) Enriquecimiento (robusto)
     enrich_df = pd.DataFrame()
-
-    # 2) Enriquecimiento opcional con g:Profiler
     if args.run_enrichment:
         try:
             enrich_df = run_gprofiler_enrichment(genes, organism=args.organism)
@@ -386,34 +409,28 @@ def main(argv: Optional[List[str]] = None) -> int:
             enrich_df.to_csv(enrichment_csv, index=False)
             logging.info("Guardado: %s (%d filas)", enrichment_csv, len(enrich_df))
         except ImportError as e:
-            logging.error(str(e))
-            return 5
+            logging.warning("%s. Continuo sin enriquecimiento.", e)
         except Exception as e:
-            logging.exception("Fallo en enriquecimiento con g:Profiler: %s", e)
-            return 6
+            logging.warning("Enriquecimiento falló: %s. Continuo sin ORA.", e)
 
-    # 3) Gráficos (si procede)
+    # 4) Gráficos (si procede)
     if args.plot and not enrich_df.empty:
         try:
             plot_top_terms(enrich_df, outdir, topn=args.topn)
         except Exception as e:
-            logging.exception("Fallo generando gráficos: %s", e)
-            # No abortamos el script si fallan los plots
+            logging.warning("Fallo generando gráficos: %s", e)
 
-    # 4) CSV principal (si el usuario quiere un único archivo de salida)
-    if args.output is not None:
-        # intentamos componer un resumen compacto
+    # 5) CSV resumen único
+    if args.output:
         summary_path = Path(args.output)
         try:
-            # Tomamos top 20 términos por FDR si existen
+            # Top 20 términos por FDR si existen
             if not enrich_df.empty and "fdr" in enrich_df.columns:
-                top_terms = enrich_df.sort_values("fdr").head(20)[
-                    ["db", "term_id", "term_name", "fdr", "overlap", "term_size", "intersection_genes"]
-                ].copy()
+                cols = [c for c in ["db", "term_id", "term_name", "fdr", "overlap", "term_size", "intersection_genes"] if c in enrich_df.columns]
+                top_terms = enrich_df.sort_values("fdr").head(20)[cols].copy()
             else:
                 top_terms = pd.DataFrame(columns=["db", "term_id", "term_name", "fdr", "overlap", "term_size", "intersection_genes"])
 
-            # Guardamos un CSV "multi-hoja" concatenando con separadores
             with open(summary_path, "w", encoding="utf-8") as fh:
                 fh.write("# id_mapping\n")
                 mapping_df.to_csv(fh, index=False)
@@ -423,10 +440,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 top_terms.to_csv(fh, index=False)
             logging.info("Guardado resumen: %s", summary_path)
         except Exception as e:
-            logging.exception("No se pudo escribir el CSV de salida principal (--output): %s", e)
-            return 7
+            logging.warning("No se pudo escribir el CSV resumen (%s): %s", summary_path, e)
 
-    logging.info("Análisis funcional completado correctamente.")
+    logging.info("Análisis funcional completado.")
     return 0
 
 
