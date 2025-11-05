@@ -1,39 +1,73 @@
 # Proyecto de Análisis Funcional y Propagación en Redes
 
-Este repositorio contiene la plantilla base para el proyecto de análisis funcional.
+# Análisis funcional de **COX4I2**, **ND1** y **ATP6**
 
-## Objetivo
-Desarrollar un script en Python que realice análisis funcional con propagación en redes a partir de una lista de genes diferencialmente expresados.
+## Introducción
 
-## Estructura del repositorio
+Este proyecto implementa un análisis funcional centrado en tres genes mitocondriales clave de la fosforilación oxidativa (OXPHOS):
 
-```
-├── data/                # Archivos de entrada (lista de genes, redes, etc.)
-├── results/             # Resultados generados por el script
-├── scripts/             # Código fuente del proyecto
-├── docs/                # Documentación adicional (opcional)
-├── README.md            # Este archivo
-└── requirements.txt     # Dependencias del proyecto
-```
+- **COX4I2** — subunidad reguladora del **Complejo IV** (citocromo c oxidasa), ajusta la eficiencia respiratoria y la respuesta a oxígeno.  
+- **ND1 (MT-ND1)** — subunidad esencial del **Complejo I** (NADH deshidrogenasa), punto de entrada de electrones a la cadena.  
+- **ATP6 (MT-ATP6)** — subunidad del canal **F₀** de la **ATP sintasa** (Complejo V), necesaria para la síntesis de ATP.
 
-## Instrucciones
-1. Haz un fork de este repositorio.
-2. Trabaja en tu fork con tu grupo.
-3. Implementa el análisis funcional con propagación en redes.
-4. Documenta tu código y resultados.
-5. Sube tu proyecto a GitHub y asegúrate de que sea reproducible.
+**Qué haremos:** recuperar anotación gene-céntrica (GO/KEGG/Reactome) y realizar enriquecimiento funcional (**ORA**) para identificar procesos y vías sobre-representados en la lista de genes.
 
-## Rúbrica de Evaluación
+---
 
-| Criterio | Descripción | Puntos |
-|---------|-------------|--------|
-| **1. Funcionalidad del script** | Correcta ejecución del análisis funcional y/o propagación. | 25 |
-| **2. Elección y justificación de técnicas** | Adecuación y justificación de los métodos usados. | 15 |
-| **3. Automatización y flujo de trabajo** | Entrada por CLI, conversión de IDs, descarga de datos, etc. | 15 |
-| **4. Documentación y reproducibilidad** | README claro, dependencias, ejemplos. | 15 |
-| **5. Calidad del código** | Estilo, modularidad, comentarios. | 10 |
-| **6. Análisis y visualización de resultados** | Salidas interpretables, gráficos, tablas. | 10 |
-| **Bonus** | Originalidad, integración de datos, visualizaciones interactivas. | +10 |
+## Bases teóricas (resumen)
 
-## Evaluación individual
-Se tendrá en cuenta la participación de cada miembro del grupo a través del historial de commits en GitHub.
+- **Gene Ontology (GO):** vocabulario controlado para describir **Procesos Biológicos (BP)**, **Funciones Moleculares (MF)** y **Componentes Celulares (CC)**.  
+- **KEGG / Reactome:** bases de vías (*pathways*) que agrupan interacciones y reacciones moleculares.  
+- **Análisis de sobre-representación (ORA):** contrasta si ciertos términos/vías aparecen más de lo esperado por azar en nuestra lista.  
+  - Prueba **hipergeométrica**.  
+  - Corrección por múltiples pruebas (**FDR**).
+
+---
+
+## Metodología
+
+### 1) Entrada
+
+- `data/genes_input.txt` con símbolos de genes (no se modifica).  
+- Aunque nos enfocamos en **COX4I2**, **ND1** y **ATP6**, el flujo acepta **cualquier lista**.
+
+### 2) Mapeo y anotación gene-céntrica
+
+- Conversión de símbolos a **Entrez/Ensembl/UniProt** usando **MyGene.info**.  
+- Recuperación, por gen, de términos **GO (BP/MF/CC)** y vías **KEGG/Reactome**.
+
+### 3) Enriquecimiento (ORA)
+
+- Motor **g:Profiler** contra **GO:BP/MF/CC**, **KEGG** y **Reactome**.  
+- Cálculo de **p-valores** y **FDR (Benjamini–Hochberg)**.  
+- Priorización de términos/vías más significativos.
+
+### 4) Exportación y visualización
+
+**CSV**
+- `results/id_mapping.csv` — equivalencias de IDs por gen.  
+- `results/functional_annotations.csv` — anotaciones GO/KEGG/Reactome por gen.  
+- `results/enrichment_table.csv` — resultados de ORA.
+
+**Figuras**
+- `results/plots/*.png` — barplots con **−log10(FDR)** por base de datos.
+
+**Resumen**
+- `results/resumen.csv` — mapeos, anotaciones y *top* de enriquecimiento.
+
+### 5) Robustez y reproducibilidad
+
+- Normalización de organismo automática: **human** (MyGene) / **hsapiens** (g:Profiler).  
+- Reintento si g:Profiler falla (p. ej., **error 500**) y continuidad del *pipeline*.  
+- Dependencias fijadas en `requirements.txt`.
+
+---
+
+## Resultados esperados (para COX4I2, ND1, ATP6)
+
+- **GO:BP:** respiración mitocondrial, transporte de electrones, síntesis de ATP, mantenimiento del potencial de membrana, respuesta a hipoxia (por el papel regulador de **COX4I2**).  
+- **KEGG/Reactome:** **Oxidative phosphorylation (OXPHOS)** y módulos de **Complejo I/IV/V**.
+
+> **Nota:** con listas pequeñas, el poder estadístico del **ORA** es limitado; la anotación gene-céntrica aporta contexto clave.
+
+
