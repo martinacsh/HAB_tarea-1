@@ -4,7 +4,7 @@ func_an.py — Análisis funcional de genes (anotación + enriquecimiento opcion
 
 Objetivo
 --------
-- Ejecutar TODO con **un solo comando** si quieres: `python scripts/func_an.py --all`
+- Ejecutar TODO con **un solo comando**: `python scripts/func_an.py --all`
 - Por defecto usa `data/genes_input.txt`, escribe en `results/`, y genera `results/resumen.csv`.
 
 Qué hace
@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from time import sleep
+import re
 import pandas as pd
 
 # -----------------------------------------------------------------------------
@@ -227,13 +228,96 @@ def map_and_annotate_with_mygene(genes: List[str], organism: str = "hsapiens") -
 
 
 # -----------------------------------------------------------------------------
-# Enriquecimiento con g:Profiler (con normalización y reintento)
+# Utilidades para armonizar columnas de g:Profiler (tolerante a versiones)
+# -----------------------------------------------------------------------------
+
+def _coerce_gprofiler_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Devuelve un DataFrame con columnas estandarizadas:
+    db, term_id, term_name, pvalue, fdr, term_size, query_size, overlap, intersection_genes
+    (crea las que falten a partir de sinónimos o pone valores por defecto).
+    """
+    df2 = df.copy()
+
+    # Fuente / base de datos
+    if "db" not in df2.columns:
+        for cand in ["source", "database", "category"]:
+            if cand in df2.columns:
+                df2["db"] = df2[cand]
+                break
+
+    # ID y nombre del término
+    if "term_id" not in df2.columns:
+        for cand in ["term_id", "native", "id", "term"]:
+            if cand in df2.columns:
+                df2["term_id"] = df2[cand]
+                break
+    if "term_name" not in df2.columns:
+        for cand in ["name", "term_name", "description", "term_label", "term"]:
+            if cand in df2.columns:
+                df2["term_name"] = df2[cand]
+                break
+
+    # p-value y FDR/ajustado
+    if "pvalue" not in df2.columns:
+        for cand in ["p_value", "pval", "p"]:
+            if cand in df2.columns:
+                df2["pvalue"] = df2[cand]
+                break
+    if "fdr" not in df2.columns:
+        for cand in ["p_value_adjusted", "adjusted_p_value", "adj_p_value", "adj_p", "padj", "q_value", "qvalue"]:
+            if cand in df2.columns:
+                df2["fdr"] = df2[cand]
+                break
+
+    # tamaños y solape
+    if "term_size" not in df2.columns:
+        for cand in ["term_size", "effective_domain_size", "term_size_total"]:
+            if cand in df2.columns:
+                df2["term_size"] = df2[cand]
+                break
+    if "query_size" not in df2.columns:
+        for cand in ["query_size", "n_query", "effective_query_size"]:
+            if cand in df2.columns:
+                df2["query_size"] = df2[cand]
+                break
+    if "overlap" not in df2.columns:
+        for cand in ["intersection_size", "overlap", "n_intersections"]:
+            if cand in df2.columns:
+                df2["overlap"] = df2[cand]
+                break
+    if "intersection_genes" not in df2.columns:
+        for cand in ["intersections", "intersection_genes", "overlapping_genes"]:
+            if cand in df2.columns:
+                df2["intersection_genes"] = df2[cand]
+                break
+
+    # Asegura presencia mínima con valores por defecto
+    for col, default in [
+        ("db", "NA"),
+        ("term_id", "NA"),
+        ("term_name", "NA"),
+        ("pvalue", 1.0),
+        ("fdr", None),
+        ("term_size", None),
+        ("query_size", None),
+        ("overlap", None),
+        ("intersection_genes", None),
+    ]:
+        if col not in df2.columns:
+            df2[col] = default
+
+    return df2
+
+
+# -----------------------------------------------------------------------------
+# Enriquecimiento con g:Profiler (con normalización, reintento y armonización)
 # -----------------------------------------------------------------------------
 
 def run_gprofiler_enrichment(genes: List[str], organism: str = "hsapiens",
                               sources: Optional[List[str]] = None) -> pd.DataFrame:
     """
-    Ejecuta ORA usando g:Profiler y devuelve un DataFrame con p-value y FDR.
+    Ejecuta ORA usando g:Profiler y devuelve un DataFrame con pvalue y fdr estandarizados.
     """
     if sources is None:
         sources = ["GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC"]
@@ -250,7 +334,7 @@ def run_gprofiler_enrichment(genes: List[str], organism: str = "hsapiens",
     last_err: Optional[BaseException] = None
     for attempt in range(2):
         try:
-            res_df = gp.profile(
+            raw = gp.profile(
                 organism=gp_org,
                 query=genes,
                 sources=sources,
@@ -262,23 +346,25 @@ def run_gprofiler_enrichment(genes: List[str], organism: str = "hsapiens",
             logging.warning("g:Profiler falló (intento %d/2): %s", attempt + 1, e)
             sleep(1.0)
     else:
-        # No se pudo recuperar; propaga el último error
         raise last_err  # type: ignore[misc]
 
-    # Normalización de columnas
+    # Renombrado estándar primero (casos típicos)
     rename_map = {
         "p_value": "pvalue",
         "p_value_adjusted": "fdr",
         "source": "db",
-        "term_id": "term_id",
         "name": "term_name",
         "term_size": "term_size",
         "query_size": "query_size",
         "intersection_size": "overlap",
         "intersections": "intersection_genes",
     }
-    res_df = res_df.rename(columns=rename_map)
+    res_df = raw.rename(columns=rename_map)
 
+    # Armoniza columnas para soportar variantes de nombres
+    res_df = _coerce_gprofiler_columns(res_df)
+
+    # Orden sugerido: por FDR si está, si no por pvalue
     sort_cols = [c for c in ("fdr", "pvalue") if c in res_df.columns]
     if sort_cols:
         res_df = res_df.sort_values(by=sort_cols, ascending=True)
@@ -287,7 +373,7 @@ def run_gprofiler_enrichment(genes: List[str], organism: str = "hsapiens",
 
 
 # -----------------------------------------------------------------------------
-# Gráficos
+# Gráficos (robustos y con nombres de archivo saneados)
 # -----------------------------------------------------------------------------
 
 def plot_top_terms(res_df: pd.DataFrame, outdir: Path, topn: int = 10) -> None:
@@ -302,18 +388,39 @@ def plot_top_terms(res_df: pd.DataFrame, outdir: Path, topn: int = 10) -> None:
     out_plots.mkdir(parents=True, exist_ok=True)
 
     df = res_df.copy()
-    if "fdr" not in df.columns:
-        logging.warning("La columna 'fdr' no está; se usará 'pvalue'.")
-        df["fdr"] = df.get("pvalue", 1.0)
 
-    df["neglog10_fdr"] = df["fdr"].apply(lambda x: -math.log10(x) if x > 0 else 0)
+    # Asegura columna 'fdr' (si no, usa mejor alternativa disponible)
+    if "fdr" not in df.columns or df["fdr"].isna().all():
+        for cand in ["p_value_adjusted", "adjusted_p_value", "adj_p_value", "adj_p", "q_value", "qvalue", "pvalue"]:
+            if cand in df.columns:
+                df["fdr"] = df[cand]
+                break
+        else:
+            df["fdr"] = 1.0
+            logging.warning("No se encontró FDR ni equivalentes; se usará 1.0.")
 
+    # Serie de etiquetas robusta
+    if "term_name" in df.columns and not df["term_name"].isna().all():
+        label_col = "term_name"
+    elif "term_id" in df.columns:
+        label_col = "term_id"
+    else:
+        label_col = None  # usaremos el índice como fallback
+
+    # Transforma a -log10(FDR)
+    df["neglog10_fdr"] = df["fdr"].apply(lambda x: -math.log10(x) if pd.notna(x) and x > 0 else 0)
+
+    # Por cada base de datos dibuja top-N
     for db in sorted(df["db"].dropna().unique()):
         sub = df[df["db"] == db].head(topn)
         if sub.empty:
             continue
-        # Evita NaN en nombres
-        labels = sub["term_name"].fillna(sub["term_id"]).astype(str)
+
+        if label_col is None:
+            labels = sub.index.astype(str)
+        else:
+            labels = sub[label_col].astype(str).fillna("NA")
+
         values = sub["neglog10_fdr"].astype(float)
 
         plt.figure(figsize=(10, max(3, 0.45 * len(sub))))
@@ -322,11 +429,17 @@ def plot_top_terms(res_df: pd.DataFrame, outdir: Path, topn: int = 10) -> None:
         plt.ylabel("Término")
         plt.title(f"Top {len(sub)} términos — {db}")
         plt.gca().invert_yaxis()
-        fname = out_plots / f"{db.lower()}_barplot.png"
+
+        # Nombre de archivo seguro en todos los SOs
+        safe_db = re.sub(r"[^A-Za-z0-9]+", "_", str(db).lower()).strip("_")
+        fname = out_plots / f"{safe_db}_barplot.png"
+
         plt.tight_layout()
-        plt.savefig(fname, dpi=150)
-        plt.close()
-        logging.info("Guardado plot: %s", fname)
+        try:
+            plt.savefig(fname, dpi=150)
+            logging.info("Guardado plot: %s", fname)
+        finally:
+            plt.close()
 
 
 # -----------------------------------------------------------------------------
@@ -425,11 +538,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         summary_path = Path(args.output)
         try:
             # Top 20 términos por FDR si existen
-            if not enrich_df.empty and "fdr" in enrich_df.columns:
-                cols = [c for c in ["db", "term_id", "term_name", "fdr", "overlap", "term_size", "intersection_genes"] if c in enrich_df.columns]
-                top_terms = enrich_df.sort_values("fdr").head(20)[cols].copy()
+            if not enrich_df.empty:
+                cols_present = [c for c in ["db", "term_id", "term_name", "fdr", "pvalue", "overlap", "term_size", "intersection_genes"] if c in enrich_df.columns]
+                sort_key = "fdr" if "fdr" in enrich_df.columns else "pvalue"
+                top_terms = enrich_df.sort_values(sort_key).head(20)[cols_present].copy()
             else:
-                top_terms = pd.DataFrame(columns=["db", "term_id", "term_name", "fdr", "overlap", "term_size", "intersection_genes"])
+                top_terms = pd.DataFrame(columns=["db", "term_id", "term_name", "fdr", "pvalue", "overlap", "term_size", "intersection_genes"])
 
             with open(summary_path, "w", encoding="utf-8") as fh:
                 fh.write("# id_mapping\n")
@@ -448,3 +562,4 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
