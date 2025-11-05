@@ -55,6 +55,19 @@ Este proyecto implementa un análisis funcional centrado en tres genes mitocondr
 **Resumen**
 - `results/resumen.csv` — mapeos, anotaciones y *top* de enriquecimiento.
 
+---
+
+## Justificación de métodos (resumen)
+
+- **Anotación gene-céntrica (MyGene.info):** unifica **Entrez/Ensembl/UniProt** y recupera **GO/KEGG/Reactome** por gen, asegurando **trazabilidad** y **desambiguación** (crítica en genes mitocondriales). Aporta **contexto** incluso con listas cortas.  
+- **Inferencia funcional (ORA con g:Profiler):** adecuada para listas **no rankeadas** y **pequeñas**; prueba **hipergeométrica** y control **FDR (BH)**. **GSEA** no se usa por defecto (requiere ranking global y pierde potencia en listas pequeñas), pero se contempla si se dispone de un **universo rankeado**.  
+- **Visualización:** barplots de **−log10(FDR)** por base (**GO: BP/MF/CC**, **KEGG**, **Reactome**) para comunicar significancia; la **tabla completa** de enriquecimiento (incluyendo genes de intersección) se mantiene en **CSV** para análisis detallado.  
+- **Reproducibilidad/robustez:** CLI con `--all` (mapeo+anotación+ORA+gráficos+resumen), **valores por defecto seguros**, normalización de organismo (**MyGene→"human"**, **g:Profiler→"hsapiens"**), opción `--verbose`, **dependencias fijadas** y **reintentos** ante fallos puntuales del servicio de enriquecimiento.  
+- **Extensiones y limitaciones:** posible **propagación en redes** (p. ej., **Random Walk with Restart** sobre PPI) para priorizar vecinos y repetir ORA capturando módulos. Con **listas muy pequeñas**, la **potencia** es limitada; se compensa con la **evidencia estable** de la anotación gene-céntrica.
+
+
+---
+
 ### 5) Robustez y reproducibilidad
 
 - Normalización de organismo automática: **human** (MyGene) / **hsapiens** (g:Profiler).  
