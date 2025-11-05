@@ -93,4 +93,28 @@ Este proyecto implementa un análisis funcional centrado en tres genes mitocondr
 
 > **Nota:** con listas pequeñas, el poder estadístico del **ORA** es limitado; la anotación gene-céntrica aporta contexto clave.
 
+## Guía de ejecución
+
+Aquí tienes las técnicas/ejecuciones que puedes lanzar por separado, con sus comandos exactos: 
+
+1) Solo mapeo y anotación gene-céntrica(GO/KEGG/Reactome por gen):
+python scripts/func_an.py --input data/genes_input.txt --outdir results --organism human
+
+3) Enriquecimiento (ORA vía g:Profiler) sin gráficos:
+python scripts/func_an.py --input data/genes_input.txt --outdir results --run-enrichment --organism human
+
+4) Ejecutar todo el flujo con los valores por defecto:
+python scripts/func_an.py --all
+
+6) Cambiar el nº de términos mostrados en las figuras:
+python scripts/func_an.py --run-enrichment --plot --topn 20 --organism human
+
+8) Generar solo el resumen combinado (sin ORA ni gráficos):
+python scripts/func_an.py --input data/genes_input.txt --outdir results --output results/resumen.csv --organism human
+
+
+
+
+
+
 
